@@ -65,6 +65,19 @@ func TestConfigValidation(t *testing.T) {
 		require.NoError(t, validateConfig(conf))
 		require.Equal(t, uint16(protocol.MaxPacketBufferSize), conf.InitialPacketSize)
 	})
+
+	t.Run("max UDP payload size", func(t *testing.T) {
+		for _, size := range []uint16{0, protocol.MinInitialPacketSize, 1360, protocol.MaxPacketBufferSize} {
+			conf := &Config{MaxUDPPayloadSize: size}
+			require.NoError(t, validateConfig(conf))
+			require.Equal(t, size, conf.MaxUDPPayloadSize)
+		}
+
+		for _, size := range []uint16{1, protocol.MinInitialPacketSize - 1, protocol.MaxPacketBufferSize + 1, 65535} {
+			err := validateConfig(&Config{MaxUDPPayloadSize: size})
+			require.ErrorContains(t, err, "invalid max UDP payload size")
+		}
+	})
 }
 
 func TestConfigHandshakeIdleTimeout(t *testing.T) {
@@ -124,6 +137,8 @@ func configWithNonZeroNonFunctionFields(t *testing.T) *Config {
 			f.Set(reflect.ValueOf(true))
 		case "InitialPacketSize":
 			f.Set(reflect.ValueOf(uint16(1350)))
+		case "MaxUDPPayloadSize":
+			f.Set(reflect.ValueOf(uint16(1360)))
 		case "DisablePathMTUDiscovery":
 			f.Set(reflect.ValueOf(true))
 		case "Allow0RTT":
@@ -191,6 +206,8 @@ func TestConfigDefaultValues(t *testing.T) {
 	// Keep zero to distinguish the default from an explicitly configured floor.
 	require.Zero(t, c.InitialPacketSize)
 	require.Equal(t, protocol.ByteCount(protocol.InitialPacketSize), c.initialPacketSize())
+	require.Zero(t, c.MaxUDPPayloadSize)
+	require.Equal(t, protocol.ByteCount(protocol.MaxPacketBufferSize), c.maxUDPPayloadSize())
 }
 
 func TestConfigZeroLimits(t *testing.T) {

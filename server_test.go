@@ -885,6 +885,25 @@ func TestServerGetConfigForClientReject(t *testing.T) {
 	checkConnectionClose(t, conn, &eventRecorder, destConnID, srcConnID, qerr.ConnectionRefused)
 }
 
+func TestServerGetConfigForClientInvalidMaxUDPPayloadSize(t *testing.T) {
+	var eventRecorder events.Recorder
+	server := newTestServer(t, &serverOpts{
+		eventRecorder: &eventRecorder,
+		config: &Config{
+			GetConfigForClient: func(*ClientInfo) (*Config, error) {
+				return &Config{MaxUDPPayloadSize: protocol.MinInitialPacketSize - 1}, nil
+			},
+		},
+	})
+
+	conn := newUDPConnLocalhost(t)
+	srcConnID := randConnID(6)
+	destConnID := randConnID(8)
+	server.handlePacket(getValidInitialPacket(t, conn.LocalAddr(), srcConnID, destConnID))
+
+	checkConnectionClose(t, conn, &eventRecorder, destConnID, srcConnID, qerr.ConnectionRefused)
+}
+
 func TestServerReceiveQueue(t *testing.T) {
 	var eventRecorder events.Recorder
 	acceptConn := make(chan struct{})

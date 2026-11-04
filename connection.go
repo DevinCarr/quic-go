@@ -342,7 +342,7 @@ var newConnection = func(
 		MaxUniStreamNum:                 protocol.StreamNum(s.config.MaxIncomingUniStreams),
 		MaxAckDelay:                     ackhandler.MaxAckDelay + protocol.TimerGranularity,
 		AckDelayExponent:                protocol.AckDelayExponent,
-		MaxUDPPayloadSize:               protocol.MaxPacketBufferSize,
+		MaxUDPPayloadSize:               s.config.maxUDPPayloadSize(),
 		StatelessResetToken:             &statelessResetToken,
 		OriginalDestinationConnectionID: origDestConnID,
 		// For interoperability with quic-go versions before May 2023, this value must be set to a value
@@ -479,7 +479,7 @@ var newClientConnection = func(
 		MaxBidiStreamNum:               protocol.StreamNum(s.config.MaxIncomingStreams),
 		MaxUniStreamNum:                protocol.StreamNum(s.config.MaxIncomingUniStreams),
 		MaxAckDelay:                    ackhandler.MaxAckDelay + protocol.TimerGranularity,
-		MaxUDPPayloadSize:              protocol.MaxPacketBufferSize,
+		MaxUDPPayloadSize:              s.config.maxUDPPayloadSize(),
 		AckDelayExponent:               protocol.AckDelayExponent,
 		// For interoperability with quic-go versions before May 2023, this value must be set to a value
 		// different from protocol.DefaultActiveConnectionIDLimit.

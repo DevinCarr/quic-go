@@ -181,6 +181,14 @@ type Config struct {
 	// a "message too long" error at that size fails the handshake instead.
 	// Values below 1200 are invalid.
 	InitialPacketSize uint16
+	// MaxUDPPayloadSize is the max_udp_payload_size transport parameter (RFC 9000, Section 18.2)
+	// advertised to the peer. It limits the size of UDP payloads that the peer may send,
+	// and therefore also limits how far the peer's Path MTU Discovery can raise its packet size.
+	// This is useful when the path is known to add encapsulation overhead later in the connection,
+	// since Path MTU Discovery never reduces the packet size once it has been raised.
+	// If set to 0, it defaults to 1452 bytes.
+	// Values below 1200 or above 1452 are invalid.
+	MaxUDPPayloadSize uint16
 	// DisablePathMTUDiscovery disables Path MTU Discovery (RFC 8899).
 	// This allows the sending of QUIC packets that fully utilize the available MTU of the path.
 	// Path MTU discovery is only available on systems that allow setting of the Don't Fragment (DF) bit.
