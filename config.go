@@ -29,6 +29,23 @@ func (c *Config) initialPacketSize() protocol.ByteCount {
 	return protocol.ByteCount(c.InitialPacketSize)
 }
 
+func (c *Config) maxUDPPayloadSize() protocol.ByteCount {
+	if c.MaxUDPPayloadSize == 0 {
+		return protocol.MaxPacketBufferSize
+	}
+	return protocol.ByteCount(c.MaxUDPPayloadSize)
+}
+
+func validateMaxUDPPayloadSize(size uint16) error {
+	if size == 0 {
+		return nil
+	}
+	if size < protocol.MinInitialPacketSize || size > protocol.MaxPacketBufferSize {
+		return fmt.Errorf("invalid max UDP payload size: %d (must be between %d and %d)", size, protocol.MinInitialPacketSize, protocol.MaxPacketBufferSize)
+	}
+	return nil
+}
+
 func validateConfig(config *Config) error {
 	if config == nil {
 		return nil
@@ -51,6 +68,9 @@ func validateConfig(config *Config) error {
 	}
 	if config.InitialPacketSize > protocol.MaxPacketBufferSize {
 		config.InitialPacketSize = protocol.MaxPacketBufferSize
+	}
+	if err := validateMaxUDPPayloadSize(config.MaxUDPPayloadSize); err != nil {
+		return err
 	}
 	// check that all QUIC versions are actually supported
 	for _, v := range config.Versions {
@@ -124,6 +144,7 @@ func populateConfig(config *Config) *Config {
 		TokenStore:                       config.TokenStore,
 		EnableDatagrams:                  config.EnableDatagrams,
 		InitialPacketSize:                config.InitialPacketSize,
+		MaxUDPPayloadSize:                config.MaxUDPPayloadSize,
 		DisablePathMTUDiscovery:          config.DisablePathMTUDiscovery,
 		EnableStreamResetPartialDelivery: config.EnableStreamResetPartialDelivery,
 		Allow0RTT:                        config.Allow0RTT,

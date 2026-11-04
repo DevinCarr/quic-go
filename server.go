@@ -786,6 +786,11 @@ func (s *baseServer) handleInitialImpl(p receivedPacket, hdr *wire.Header) error
 			return nil
 		}
 		config = populateConfig(conf)
+		if err := validateMaxUDPPayloadSize(config.MaxUDPPayloadSize); err != nil {
+			s.logger.Debugf("Rejecting new connection due to invalid config from GetConfigForClient callback: %s", err)
+			s.refuseNewConn(p, hdr)
+			return nil
+		}
 	}
 
 	var conn *wrappedConn

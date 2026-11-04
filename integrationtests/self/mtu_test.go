@@ -194,3 +194,151 @@ func TestPathMTUDiscovery(t *testing.T) {
 	// except for at most one MTU probe packet.
 	require.LessOrEqual(t, numPacketsLargerThanDiscoveredMTU, 1)
 }
+
+func TestMaxUDPPayloadSize(t *testing.T) {
+	rtt := scaleDuration(5 * time.Millisecond)
+	const (
+		serverMaxUDPPayloadSize = 1300 // limits the size of packets sent by the client
+		clientMaxUDPPayloadSize = 1350 // limits the size of packets sent by the server
+	)
+
+	var serverEventRecorder events.Recorder
+	ln, err := quic.Listen(
+		newUDPConnLocalhost(t),
+		getTLSConfig(),
+		getQuicConfig(&quic.Config{
+			InitialPacketSize: protocol.MinInitialPacketSize,
+			MaxUDPPayloadSize: serverMaxUDPPayloadSize,
+			Tracer:            newTracer(&serverEventRecorder),
+		}),
+	)
+	require.NoError(t, err)
+	defer ln.Close()
+
+	serverErrChan := make(chan error, 1)
+	go func() {
+		conn, err := ln.Accept(context.Background())
+		if err != nil {
+			serverErrChan <- err
+			return
+		}
+		str, err := conn.AcceptStream(context.Background())
+		if err != nil {
+			serverErrChan <- err
+			return
+		}
+		defer str.Close()
+		if _, err := io.Copy(str, str); err != nil {
+			serverErrChan <- err
+			return
+		}
+	}()
+
+	var mx sync.Mutex
+	var maxPacketSizeClient, maxPacketSizeServer int
+	proxy := &quicproxy.Proxy{
+		Conn:        newUDPConnLocalhost(t),
+		ServerAddr:  ln.Addr().(*net.UDPAddr),
+		DelayPacket: func(quicproxy.Direction, net.Addr, net.Addr, []byte) time.Duration { return rtt / 2 },
+		DropPacket: func(dir quicproxy.Direction, _, _ net.Addr, packet []byte) bool {
+			mx.Lock()
+			defer mx.Unlock()
+			switch dir {
+			case quicproxy.DirectionIncoming:
+				maxPacketSizeClient = max(maxPacketSizeClient, len(packet))
+			case quicproxy.DirectionOutgoing:
+				maxPacketSizeServer = max(maxPacketSizeServer, len(packet))
+			}
+			return false
+		},
+	}
+	require.NoError(t, proxy.Start())
+	defer proxy.Close()
+
+	// Make sure to use v4-only socket here.
+	// We can't reliably set the DF bit on dual-stack sockets on older versions of macOS (before Sequoia).
+	tr := &quic.Transport{Conn: newUDPConnLocalhost(t)}
+	defer tr.Close()
+
+	var clientEventRecorder events.Recorder
+	conn, err := tr.Dial(
+		context.Background(),
+		proxy.LocalAddr(),
+		getTLSClientConfig(),
+		getQuicConfig(&quic.Config{
+			InitialPacketSize: protocol.MinInitialPacketSize,
+			MaxUDPPayloadSize: clientMaxUDPPayloadSize,
+			Tracer:            newTracer(&clientEventRecorder),
+		}),
+	)
+	require.NoError(t, err)
+	defer conn.CloseWithError(0, "")
+
+	str, err := conn.OpenStream()
+	require.NoError(t, err)
+
+	clientErrChan := make(chan error, 1)
+	go func() {
+		data, err := io.ReadAll(str)
+		if err != nil {
+			clientErrChan <- err
+			return
+		}
+		if !bytes.Equal(data, PRDataLong) {
+			clientErrChan <- fmt.Errorf("echoed data doesn't match: %x", data)
+			return
+		}
+		clientErrChan <- nil
+	}()
+
+	_, err = str.Write(PRDataLong)
+	require.NoError(t, err)
+	str.Close()
+
+	select {
+	case err := <-clientErrChan:
+		require.NoError(t, err)
+	case err := <-serverErrChan:
+		t.Fatalf("server error: %v", err)
+	case <-time.After(20 * time.Second):
+		t.Fatal("timeout")
+	}
+
+	// Each endpoint advertises its configured max_udp_payload_size.
+	require.Equal(t, serverMaxUDPPayloadSize, int(remoteMaxUDPPayloadSize(t, &clientEventRecorder)))
+	require.Equal(t, clientMaxUDPPayloadSize, int(remoteMaxUDPPayloadSize(t, &serverEventRecorder)))
+
+	mx.Lock()
+	clientMaxPacketSize, serverMaxPacketSize := maxPacketSizeClient, maxPacketSizeServer
+	mx.Unlock()
+
+	// Path MTU Discovery runs up to, but never beyond, the peer's max_udp_payload_size.
+	clientMTU := lastMTU(t, &clientEventRecorder)
+	serverMTU := lastMTU(t, &serverEventRecorder)
+	t.Logf("client: discovered MTU: %d, max packet size: %d", clientMTU, clientMaxPacketSize)
+	t.Logf("server: discovered MTU: %d, max packet size: %d", serverMTU, serverMaxPacketSize)
+	require.GreaterOrEqual(t, clientMTU, serverMaxUDPPayloadSize-25)
+	require.LessOrEqual(t, clientMTU, serverMaxUDPPayloadSize)
+	require.GreaterOrEqual(t, serverMTU, clientMaxUDPPayloadSize-25)
+	require.LessOrEqual(t, serverMTU, clientMaxUDPPayloadSize)
+	require.LessOrEqual(t, clientMaxPacketSize, serverMaxUDPPayloadSize)
+	require.LessOrEqual(t, serverMaxPacketSize, clientMaxUDPPayloadSize)
+}
+
+func remoteMaxUDPPayloadSize(t *testing.T, recorder *events.Recorder) protocol.ByteCount {
+	t.Helper()
+	for _, ev := range recorder.Events(qlog.ParametersSet{}) {
+		if params := ev.(qlog.ParametersSet); params.Initiator == qlog.InitiatorRemote {
+			return params.MaxUDPPayloadSize
+		}
+	}
+	t.Fatal("no transport parameters received from the peer")
+	return 0
+}
+
+func lastMTU(t *testing.T, recorder *events.Recorder) int {
+	t.Helper()
+	mtuEvents := recorder.Events(qlog.MTUUpdated{})
+	require.NotEmpty(t, mtuEvents)
+	return mtuEvents[len(mtuEvents)-1].(qlog.MTUUpdated).Value
+}
